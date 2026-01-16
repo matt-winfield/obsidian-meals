@@ -2,6 +2,7 @@ import moment from 'moment';
 import type { LinkCache, TFile } from 'obsidian';
 import { DAYS_OF_WEEK } from '../constants.ts';
 import type { Context } from '../context.ts';
+import { getWeekStartMoment } from '../utils/utils.ts';
 
 export interface CalendarItem {
     name: string;
@@ -71,7 +72,7 @@ function extractDailyRecipesFromList(
         if (!weekDate) continue;
 
         // Get the week start date adjusted for startOfWeek setting
-        const weekStartDate = weekDate.clone().weekday(startOfWeek);
+        const weekStartDate = getWeekStartMoment(weekDate, startOfWeek);
 
         // Find day headings within this week section
         const weekEndOffset = getNextWeekOffset(weekHeading, weekHeadings) ?? content.length;
@@ -204,7 +205,7 @@ function extractDailyRecipesFromTable(content: string, startOfWeek: number): Map
         const weekDate = parseWeekDate(weekDateStr);
         if (!weekDate) continue;
 
-        const weekStartDate = weekDate.clone().weekday(startOfWeek);
+        const weekStartDate = getWeekStartMoment(weekDate, startOfWeek);
 
         // Find entries in each day column
         for (let colIndex = 1; colIndex < headerColumns.length; colIndex++) {
@@ -279,7 +280,7 @@ export function generateCalendarData(
 
     // Start from the first day of the month, then go back to the start of that week
     const firstOfMonth = displayMonth.clone().startOf('month');
-    const startDate = firstOfMonth.clone().weekday(startOfWeek);
+    const startDate = getWeekStartMoment(firstOfMonth, startOfWeek);
 
     // If startDate is after first of month, go back a week
     if (startDate.isAfter(firstOfMonth)) {

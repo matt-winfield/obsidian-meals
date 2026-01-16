@@ -1,6 +1,7 @@
 import moment from 'moment';
 import type { HeadingCache, TFile } from 'obsidian';
 import type { Context } from '../context.ts';
+import { getWeekStartMoment } from '../utils/utils.ts';
 
 export interface WeekInfo {
     dateString: string; // "January 5th"
@@ -30,7 +31,7 @@ export async function extractWeeksFromMealPlan(ctx: Context, file: TFile, startO
  */
 function extractWeeksFromListFormat(ctx: Context, file: TFile, headings: HeadingCache[], startOfWeek: number): WeekInfo[] {
     const weeks: WeekInfo[] = [];
-    const currentWeekStart = moment().weekday(startOfWeek).startOf('day');
+    const currentWeekStart = getWeekStartMoment(moment(), startOfWeek).startOf('day');
 
     for (let i = 0; i < headings.length; i++) {
         const heading = headings[i];
@@ -66,7 +67,7 @@ async function extractWeeksFromTableFormat(ctx: Context, file: TFile, startOfWee
     const content = await ctx.app.vault.read(file);
     const lines = content.split('\n');
     const weeks: WeekInfo[] = [];
-    const currentWeekStart = moment().weekday(startOfWeek).startOf('day');
+    const currentWeekStart = getWeekStartMoment(moment(), startOfWeek).startOf('day');
 
     let currentOffset = 0;
     let foundHeader = false;

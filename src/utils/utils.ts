@@ -2,12 +2,35 @@ import moment from 'moment';
 import { Err, Ok, type Result } from 'ts-results-es';
 import { ShoppingListIgnoreBehaviour } from '../settings/settings.ts';
 
+/**
+ * Calculate the start of the week for the current date.
+ * Uses day() (0=Sunday, 6=Saturday) instead of weekday() to avoid locale-dependent behavior.
+ */
 export function GetCurrentWeek(startOfWeek: number) {
-    return moment().weekday(startOfWeek).format('MMMM Do');
+    const today = moment();
+    const dayOfWeek = today.day();
+    const daysFromStart = (dayOfWeek - startOfWeek + 7) % 7;
+    return today.clone().subtract(daysFromStart, 'days').format('MMMM Do');
 }
 
+/**
+ * Calculate the start of the week for a given date.
+ * Uses day() (0=Sunday, 6=Saturday) instead of weekday() to avoid locale-dependent behavior.
+ */
 export function GetWeekDateFromMoment(date: moment.Moment, startOfWeek: number) {
-    return date.clone().weekday(startOfWeek).format('MMMM Do');
+    const dayOfWeek = date.day();
+    const daysFromStart = (dayOfWeek - startOfWeek + 7) % 7;
+    return date.clone().subtract(daysFromStart, 'days').format('MMMM Do');
+}
+
+/**
+ * Get the week start date as a moment object.
+ * Uses day() (0=Sunday, 6=Saturday) instead of weekday() to avoid locale-dependent behavior.
+ */
+export function getWeekStartMoment(date: moment.Moment, startOfWeek: number): moment.Moment {
+    const dayOfWeek = date.day();
+    const daysFromStart = (dayOfWeek - startOfWeek + 7) % 7;
+    return date.clone().subtract(daysFromStart, 'days');
 }
 
 // https://stackoverflow.com/questions/610406/javascript-equivalent-to-printf-string-format#4673436

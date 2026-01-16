@@ -7,7 +7,7 @@ import type { Context } from '../context.ts';
 import type { Recipe } from '../recipe/recipe.ts';
 import { MealPlanFormat } from '../settings/settings.ts';
 import { AppendMarkdownExt } from '../utils/filesystem.ts';
-import { GetCurrentWeek, GetWeekDateFromMoment } from '../utils/utils.ts';
+import { GetCurrentWeek, GetWeekDateFromMoment, getWeekStartMoment } from '../utils/utils.ts';
 
 export function createTableWeekSection(weekDate: string, dayHeaders: string[]): string {
     // Build table header row
@@ -304,7 +304,7 @@ function addWeekRowToTable(content: string, weekDate: string, dayHeaders: string
 
         if (rowDate) {
             // Determine if the new week should come before this row
-            const newWeekStart = date.clone().weekday(startOfWeek);
+            const newWeekStart = getWeekStartMoment(date, startOfWeek);
             if (newWeekStart.isAfter(rowDate)) {
                 insertIndex = i;
                 break;
@@ -322,7 +322,7 @@ function addWeekRowToTable(content: string, weekDate: string, dayHeaders: string
  */
 function addWeekSectionToList(content: string, header: string, dayHeaders: string[], date: moment.Moment, startOfWeek: number): string {
     const weekSection = `# ${header}\n${dayHeaders.map((d) => `## ${d}`).join('\n')}\n`;
-    const newWeekStart = date.clone().weekday(startOfWeek);
+    const newWeekStart = getWeekStartMoment(date, startOfWeek);
 
     // Find all existing week headers and their positions
     const weekPattern = /^# Week of (.+)$/gm;

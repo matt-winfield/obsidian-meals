@@ -1,7 +1,14 @@
+import moment from 'moment';
 import { Err, Ok, type Result } from 'ts-results-es';
-import { expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { ShoppingListIgnoreBehaviour } from '../settings/settings.ts';
-import { BehaviourValidationError, validateIgnoreBehaviour, wildcardToRegex } from '../utils/utils.ts';
+import {
+    BehaviourValidationError,
+    GetCurrentWeek,
+    GetWeekDateFromMoment,
+    validateIgnoreBehaviour,
+    wildcardToRegex,
+} from '../utils/utils.ts';
 
 test('wildcardToRegex', () => {
     interface Test {
@@ -92,4 +99,66 @@ test('validateIgnoreBehaviour_Wildcard', () => {
             expect(actual.unwrapErr().message).toStrictEqual(test.expected.unwrapErr().message);
         }
     }
+});
+
+describe('GetWeekDateFromMoment', () => {
+    test('returns correct week start for Sunday when startOfWeek is Monday', () => {
+        // Sunday January 25th, 2026 - should return Monday January 19th (the Monday of that week)
+        const date = moment('2026-01-25'); // Sunday
+        const startOfWeek = 1; // Monday
+
+        const result = GetWeekDateFromMoment(date, startOfWeek);
+
+        expect(result).toBe('January 19th');
+    });
+
+    test('returns correct week start for Monday when startOfWeek is Monday', () => {
+        // Monday January 19th, 2026 - should return January 19th
+        const date = moment('2026-01-19'); // Monday
+        const startOfWeek = 1; // Monday
+
+        const result = GetWeekDateFromMoment(date, startOfWeek);
+
+        expect(result).toBe('January 19th');
+    });
+
+    test('returns correct week start for Saturday when startOfWeek is Monday', () => {
+        // Saturday January 24th, 2026 - should return Monday January 19th
+        const date = moment('2026-01-24'); // Saturday
+        const startOfWeek = 1; // Monday
+
+        const result = GetWeekDateFromMoment(date, startOfWeek);
+
+        expect(result).toBe('January 19th');
+    });
+
+    test('returns correct week start for Sunday when startOfWeek is Sunday', () => {
+        // Sunday January 25th, 2026 - should return January 25th (the Sunday itself)
+        const date = moment('2026-01-25'); // Sunday
+        const startOfWeek = 0; // Sunday
+
+        const result = GetWeekDateFromMoment(date, startOfWeek);
+
+        expect(result).toBe('January 25th');
+    });
+
+    test('returns correct week start for Monday when startOfWeek is Sunday', () => {
+        // Monday January 26th, 2026 - should return Sunday January 25th
+        const date = moment('2026-01-26'); // Monday
+        const startOfWeek = 0; // Sunday
+
+        const result = GetWeekDateFromMoment(date, startOfWeek);
+
+        expect(result).toBe('January 25th');
+    });
+
+    test('returns correct week start for Saturday when startOfWeek is Sunday', () => {
+        // Saturday January 31st, 2026 - should return Sunday January 25th
+        const date = moment('2026-01-31'); // Saturday
+        const startOfWeek = 0; // Sunday
+
+        const result = GetWeekDateFromMoment(date, startOfWeek);
+
+        expect(result).toBe('January 25th');
+    });
 });
