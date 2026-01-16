@@ -19,8 +19,7 @@ import { AppendMarkdownExt } from './utils/filesystem.ts';
 export default class MealPlugin extends Plugin {
     ctx = new Context(this);
     loadedSettings = false;
-    private mealPlanCalendarComponent: Record<string, any> | null = null;
-    private mealPlanCalendarContainer: HTMLElement | null = null;
+    private mealPlanCalendars: Map<string, { component: Record<string, any>; container: HTMLElement }> = new Map();
 
     async onload() {
         this.addSettingTab(new MealPluginSettingsTab(this.app, this));
@@ -48,18 +47,15 @@ export default class MealPlugin extends Plugin {
                 }),
             );
 
-            // Listen for active leaf changes to inject calendar into meal plan note
+            // Listen for layout changes to inject/cleanup calendars in meal plan notes
             this.registerEvent(
-                this.app.workspace.on('active-leaf-change', (leaf) => {
-                    this.handleMealPlanCalendarInjection(leaf);
+                this.app.workspace.on('layout-change', () => {
+                    this.updateMealPlanCalendars();
                 }),
             );
 
-            // Also check the current active leaf on startup
-            const activeLeaf = this.app.workspace.getActiveViewOfType(MarkdownView)?.leaf;
-            if (activeLeaf) {
-                this.handleMealPlanCalendarInjection(activeLeaf);
-            }
+            // Also check all leaves on startup
+            this.updateMealPlanCalendars();
         });
 
         this.addCommand({
@@ -140,8 +136,7 @@ export default class MealPlugin extends Plugin {
             this.saveSettings();
 
             // Re-evaluate calendar injection when settings change
-            const activeLeaf = this.app.workspace.getActiveViewOfType(MarkdownView)?.leaf;
-            this.handleMealPlanCalendarInjection(activeLeaf ?? null);
+            this.updateMealPlanCalendars();
         });
 
         console.info('obisidan-meals plugin loaded');
@@ -194,58 +189,68 @@ export default class MealPlugin extends Plugin {
         }
     }
 
-    private handleMealPlanCalendarInjection(leaf: WorkspaceLeaf | null) {
-        // Clean up previous calendar if it exists
-        this.cleanupMealPlanCalendar();
-
-        if (!leaf) return;
-
+    private updateMealPlanCalendars() {
         const settings = get(this.ctx.settings);
-
-        // Check if the setting is enabled
-        if (!settings.showCalendarInMealPlan) return;
-
-        const view = leaf.view;
-
-        // Check if it's a MarkdownView
-        if (!(view instanceof MarkdownView)) return;
-
-        // Check if it's the meal plan note
         const mealPlanFilePath = AppendMarkdownExt(settings.mealPlanNote);
-        if (view.file?.path !== mealPlanFilePath) return;
+
+        // Track which leaves currently have the meal plan open
+        const currentMealPlanLeafIds = new Set<string>();
+
+        // Iterate through all leaves to find meal plan views
+        this.app.workspace.iterateAllLeaves((leaf) => {
+            const leafId = (leaf as any).id as string;
+
+            // Check if this leaf shows the meal plan note
+            if (
+                settings.showCalendarInMealPlan &&
+                leaf.view instanceof MarkdownView &&
+                leaf.view.file?.path === mealPlanFilePath
+            ) {
+                currentMealPlanLeafIds.add(leafId);
+
+                // Inject calendar if not already present
+                if (!this.mealPlanCalendars.has(leafId)) {
+                    this.injectCalendarIntoLeaf(leaf, leafId);
+                }
+            }
+        });
+
+        // Clean up calendars from leaves that no longer show the meal plan
+        for (const [leafId, calendar] of this.mealPlanCalendars) {
+            if (!currentMealPlanLeafIds.has(leafId)) {
+                unmount(calendar.component);
+                calendar.container.remove();
+                this.mealPlanCalendars.delete(leafId);
+            }
+        }
+    }
+
+    private injectCalendarIntoLeaf(leaf: WorkspaceLeaf, leafId: string) {
+        const view = leaf.view as MarkdownView;
 
         // Get the content container
         const contentContainer = view.containerEl.querySelector('.cm-sizer');
         if (!contentContainer) return;
 
-        // Check if calendar is already injected
+        // Check if calendar is already injected (defensive check)
         if (contentContainer.querySelector('.meal-plan-calendar-wrapper')) return;
 
         // Create container for the calendar
-        this.mealPlanCalendarContainer = document.createElement('div');
-        this.mealPlanCalendarContainer.className = 'meal-plan-calendar-injection';
+        const container = document.createElement('div');
+        container.className = 'meal-plan-calendar-injection';
 
         // Insert at the beginning of the content
-        contentContainer.insertBefore(this.mealPlanCalendarContainer, contentContainer.firstChild);
+        contentContainer.insertBefore(container, contentContainer.firstChild);
 
         // Mount the Svelte component
-        this.mealPlanCalendarComponent = mount(MealPlanCalendarWrapper, {
-            target: this.mealPlanCalendarContainer,
+        const component = mount(MealPlanCalendarWrapper, {
+            target: container,
             props: {
                 ctx: this.ctx,
             },
         });
-    }
 
-    private cleanupMealPlanCalendar() {
-        if (this.mealPlanCalendarComponent) {
-            unmount(this.mealPlanCalendarComponent);
-            this.mealPlanCalendarComponent = null;
-        }
-        if (this.mealPlanCalendarContainer) {
-            this.mealPlanCalendarContainer.remove();
-            this.mealPlanCalendarContainer = null;
-        }
+        this.mealPlanCalendars.set(leafId, { component, container });
     }
 }
 
