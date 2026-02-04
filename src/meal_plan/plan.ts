@@ -285,11 +285,35 @@ function addWeekRowToTable(content: string, weekDate: string, dayHeaders: string
     const lines = content.split('\n');
     const newRow = `| ${weekDate} |${Array(dayHeaders.length).fill(' ').join('|')}|`;
 
-    // Find the appropriate position to insert based on date order
-    // Table rows should be in chronological order (newest first or oldest first)
-    let insertIndex = 2; // Default: after header and separator
+    // Find the table header row (contains "Week Start")
+    let headerRowIndex = -1;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line.startsWith('|') && line.includes('Week Start')) {
+            headerRowIndex = i;
+            break;
+        }
+    }
 
-    for (let i = 2; i < lines.length; i++) {
+    if (headerRowIndex === -1) {
+        // No table found, return unchanged
+        return content;
+    }
+
+    // Find the appropriate position to insert based on date order
+    // Table rows should be in chronological order (oldest first, newest last)
+    // Start after header row + separator row (headerRowIndex + 2)
+    const newWeekStart = getWeekStartMoment(date, startOfWeek);
+
+    // Use the year from the input date for consistent comparisons
+    const referenceYear = date.year();
+
+    // Find the position where the new week should be inserted
+    // We want to insert BEFORE the first row that is AFTER the new week
+    let insertIndex = headerRowIndex + 2; // Default: right after separator
+    let lastValidRowIndex = headerRowIndex + 2; // Track the last row with a valid date
+
+    for (let i = headerRowIndex + 2; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line.startsWith('|')) continue;
 
@@ -300,20 +324,23 @@ function addWeekRowToTable(content: string, weekDate: string, dayHeaders: string
         if (cells.length === 0) continue;
 
         const rowDateStr = cells[0];
-        const rowDate = parseWeekDateString(rowDateStr);
+        const rowDate = parseWeekDateString(rowDateStr, referenceYear);
 
         if (rowDate) {
-            // Determine if the new week should come before this row
-            const newWeekStart = getWeekStartMoment(date, startOfWeek);
-            if (newWeekStart.isAfter(rowDate)) {
+            // If the new week is BEFORE this row's date, insert here
+            if (newWeekStart.isBefore(rowDate)) {
                 insertIndex = i;
-                break;
+                lines.splice(insertIndex, 0, newRow);
+                return lines.join('\n');
             }
+            // Track this as the last valid row we've seen
+            lastValidRowIndex = i + 1;
         }
-        insertIndex = i + 1;
     }
 
-    lines.splice(insertIndex, 0, newRow);
+    // If we get here, the new week is after all existing weeks
+    // Insert after the last row with a valid date
+    lines.splice(lastValidRowIndex, 0, newRow);
     return lines.join('\n');
 }
 
@@ -324,10 +351,13 @@ function addWeekSectionToList(content: string, header: string, dayHeaders: strin
     const weekSection = `# ${header}\n${dayHeaders.map((d) => `## ${d}`).join('\n')}\n`;
     const newWeekStart = getWeekStartMoment(date, startOfWeek);
 
+    // Use the year from the input date for consistent comparisons
+    const referenceYear = date.year();
+
     // Find all existing week headers and their positions
+    // Table rows should be in chronological order (oldest first, newest last)
     const weekPattern = /^# Week of (.+)$/gm;
-    let insertPosition = 0;
-    let foundPosition = false;
+    let lastMatchEnd = 0;
 
     // Reset lastIndex to start from the beginning
     weekPattern.lastIndex = 0;
@@ -335,45 +365,56 @@ function addWeekSectionToList(content: string, header: string, dayHeaders: strin
     let match = weekPattern.exec(content);
     while (match !== null) {
         const existingDateStr = match[1];
-        const existingDate = parseWeekDateString(existingDateStr);
+        const existingDate = parseWeekDateString(existingDateStr, referenceYear);
 
-        if (existingDate && newWeekStart.isAfter(existingDate)) {
-            // Insert before this week (newer weeks first)
-            insertPosition = match.index;
-            foundPosition = true;
-            break;
+        if (existingDate && newWeekStart.isBefore(existingDate)) {
+            // Insert before this week (new week is older)
+            return content.slice(0, match.index) + weekSection + content.slice(match.index);
         }
 
-        // Update insert position to after this match
-        insertPosition = match.index + match[0].length;
+        // Track the end of the last match for inserting at the end
+        lastMatchEnd = match.index + match[0].length;
         match = weekPattern.exec(content);
     }
 
-    if (foundPosition) {
-        return content.slice(0, insertPosition) + weekSection + content.slice(insertPosition);
-    }
-    // Add at the beginning if no existing weeks or all existing weeks are newer
+    // Add at the end if no existing weeks or new week is newer than all existing
     if (content.length === 0) {
         return weekSection;
     }
-    return weekSection + content;
+    if (lastMatchEnd === 0) {
+        // No existing week headers found, add at beginning
+        return weekSection + content;
+    }
+    // Insert after the last week section - find the end of that section
+    // (next # header or end of file)
+    const nextHeaderMatch = content.slice(lastMatchEnd).match(/\n(?=# )/);
+    if (nextHeaderMatch && nextHeaderMatch.index !== undefined) {
+        const insertPos = lastMatchEnd + nextHeaderMatch.index + 1;
+        return content.slice(0, insertPos) + weekSection + content.slice(insertPos);
+    }
+    // No next header, append at end
+    return `${content}\n${weekSection}`;
 }
 
 /**
  * Parse a week date string like "January 5th" into a moment object
+ * @param dateStr The date string to parse (e.g., "January 5th")
+ * @param referenceYear Optional year to use for parsing. If not provided, uses current year.
  */
-function parseWeekDateString(dateStr: string): moment.Moment | null {
-    const currentYear = momentLib().year();
-    let date = momentLib(`${dateStr} ${currentYear}`, 'MMMM Do YYYY');
+function parseWeekDateString(dateStr: string, referenceYear?: number): moment.Moment | null {
+    const yearToUse = referenceYear ?? momentLib().year();
+    let date = momentLib(`${dateStr} ${yearToUse}`, 'MMMM Do YYYY');
 
     if (!date.isValid()) {
         return null;
     }
 
-    // Handle year boundary
-    const now = momentLib();
-    if (date.isBefore(now, 'day') && now.month() === 11 && date.month() === 0) {
-        date = momentLib(`${dateStr} ${currentYear + 1}`, 'MMMM Do YYYY');
+    // Handle year boundary only when no reference year is provided
+    if (referenceYear === undefined) {
+        const now = momentLib();
+        if (date.isBefore(now, 'day') && now.month() === 11 && date.month() === 0) {
+            date = momentLib(`${dateStr} ${yearToUse + 1}`, 'MMMM Do YYYY');
+        }
     }
 
     return date;

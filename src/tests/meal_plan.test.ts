@@ -949,6 +949,337 @@ describe('Format conversion round-trip', () => {
     });
 });
 
+describe('addRecipeToTable edge cases', () => {
+    test('should handle table with empty row between data rows', () => {
+        const content = `| Week Start | Sunday | Monday | Tuesday | Wednesday | Thursday | Friday | Saturday |
+|---|---|---|---|---|---|---|---|
+| January 15th | | | | | | | |
+| | | | | | | | |
+| January 8th | | | | | | | |
+`;
+
+        const result = addRecipeToTable(content, 'January 8th', 'Monday', 'Test Recipe');
+
+        // Should add recipe to January 8th row
+        expect(result).toContain('| January 8th |  | [[Test Recipe]] |');
+        // Empty row should be preserved
+        expect(result).toContain('| | | | | | | | |');
+        // January 15th should be unchanged
+        expect(result).toContain('| January 15th | | | | | | | |');
+    });
+
+    test('should handle table with empty row at the beginning', () => {
+        const content = `| Week Start | Sunday | Monday | Tuesday | Wednesday | Thursday | Friday | Saturday |
+|---|---|---|---|---|---|---|---|
+| | | | | | | | |
+| January 8th | | | | | | | |
+`;
+
+        const result = addRecipeToTable(content, 'January 8th', 'Wednesday', 'Test Recipe');
+
+        // Should add recipe to January 8th row
+        expect(result).toContain('| January 8th |  |  |  | [[Test Recipe]] |');
+    });
+
+    test('should return unchanged content when week not found', () => {
+        const content = `| Week Start | Sunday | Monday | Tuesday | Wednesday | Thursday | Friday | Saturday |
+|---|---|---|---|---|---|---|---|
+| January 8th | | | | | | | |
+`;
+
+        const result = addRecipeToTable(content, 'February 1st', 'Monday', 'Test Recipe');
+
+        // Should return unchanged content since February 1st doesn't exist
+        expect(result).toBe(content);
+    });
+
+    test('should handle table with empty row at the end', () => {
+        const content = `| Week Start | Sunday | Monday | Tuesday | Wednesday | Thursday | Friday | Saturday |
+|---|---|---|---|---|---|---|---|
+| January 8th | | | | | | | |
+| | | | | | | | |
+`;
+
+        const result = addRecipeToTable(content, 'January 8th', 'Friday', 'Test Recipe');
+
+        // Should add recipe to January 8th row
+        expect(result).toContain('| January 8th |  |  |  |  |  | [[Test Recipe]] |  |');
+        // Empty row at the end should be preserved
+        expect(result).toContain('| | | | | | | | |');
+    });
+});
+
+describe('AddRecipeToMealPlanByDate with future weeks', () => {
+    let mockContext: Context;
+    let mockRecipe: Recipe;
+    let fileContent: string;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+
+        fileContent = '';
+
+        const mockFile = {
+            path: 'test-recipe.md',
+            basename: 'Test Recipe',
+        } as any;
+        mockRecipe = new Recipe(mockFile);
+
+        const mockVault = {
+            getFileByPath: vi.fn().mockReturnValue({
+                vault: {
+                    process: vi.fn((_file, callback) => {
+                        fileContent = callback(fileContent);
+                        return Promise.resolve();
+                    }),
+                },
+            }),
+            process: vi.fn((_file, callback) => {
+                fileContent = callback(fileContent);
+                return Promise.resolve();
+            }),
+            create: vi.fn().mockResolvedValue({}),
+        };
+
+        const settings = new MealSettings();
+        settings.mealPlanNote = 'Meal Plan';
+        settings.startOfWeek = 0; // Sunday
+        settings.mealPlanFormat = MealPlanFormat.Table;
+
+        mockContext = {
+            settings: writable(settings),
+            app: {
+                vault: mockVault,
+            } as any,
+            plugin: {} as any,
+            recipes: writable([]),
+            ingredients: {} as any,
+            getRecipeFolder: vi.fn(),
+            isInRecipeFolder: vi.fn(),
+            loadRecipes: vi.fn(),
+            debugMode: vi.fn().mockReturnValue(false),
+        };
+    });
+
+    test('should add recipe to future week that does not exist in table', async () => {
+        // Start with a table that has January 7th week
+        fileContent = `| Week Start | Sunday | Monday | Tuesday | Wednesday | Thursday | Friday | Saturday |
+|---|---|---|---|---|---|---|---|
+| January 7th | | | | | | | |
+`;
+
+        // Add recipe to February 4th (week of February 4th since Feb 4 2024 is a Sunday)
+        const targetDate = moment('2024-02-05'); // Monday in week of February 4th
+        await AddRecipeToMealPlanByDate(mockContext, mockRecipe, targetDate, 'Monday');
+
+        // Should create new week row and add recipe
+        expect(fileContent).toContain('February 4th');
+        expect(fileContent).toContain('[[Test Recipe]]');
+    });
+
+    test('should add recipe to week many months in future', async () => {
+        // Start with a table that has January 7th week
+        fileContent = `| Week Start | Sunday | Monday | Tuesday | Wednesday | Thursday | Friday | Saturday |
+|---|---|---|---|---|---|---|---|
+| January 7th | | | | | | | |
+`;
+
+        // Add recipe to June 3rd 2024 (week of June 2nd since June 2 2024 is a Sunday)
+        const targetDate = moment('2024-06-03'); // Monday in week of June 2nd
+        await AddRecipeToMealPlanByDate(mockContext, mockRecipe, targetDate, 'Monday');
+
+        // Should create new week row and add recipe
+        expect(fileContent).toContain('June 2nd');
+        expect(fileContent).toContain('[[Test Recipe]]');
+    });
+
+    test('should handle adding to future week when table has empty row', async () => {
+        // Table with an empty row
+        fileContent = `| Week Start | Sunday | Monday | Tuesday | Wednesday | Thursday | Friday | Saturday |
+|---|---|---|---|---|---|---|---|
+| January 7th | | | | | | | |
+| | | | | | | | |
+`;
+
+        // Add recipe to February 4th
+        const targetDate = moment('2024-02-05'); // Monday in week of February 4th
+        await AddRecipeToMealPlanByDate(mockContext, mockRecipe, targetDate, 'Monday');
+
+        // Should create new week row and add recipe
+        expect(fileContent).toContain('February 4th');
+        expect(fileContent).toContain('[[Test Recipe]]');
+        // Empty row should still exist
+        expect(fileContent).toContain('| | | | | | | | |');
+    });
+
+    test('should insert new week after separator row when table has trailing empty row', async () => {
+        // This reproduces a bug where the new row was inserted between header and separator
+        // Use Monday as start of week to match user's reported issue
+        const settings = new MealSettings();
+        settings.mealPlanNote = 'Meal Plan';
+        settings.startOfWeek = 1; // Monday
+        settings.mealPlanFormat = MealPlanFormat.Table;
+        mockContext.settings = writable(settings);
+
+        // Use extended separator format like user's actual table
+        fileContent = `| Week Start    | Monday            | Tuesday | Wednesday | Thursday | Friday | Saturday | Sunday |
+| ------------- | ----------------- | ------- | --------- | -------- | ------ | -------- | ------ |
+| January 13th  | Eating out | Eating out  | Eating out    | Eating out   | [[Recipe A]] | [[Recipe B]] | [[Recipe C]] |
+| January 20th  | Eating out | Eating out  | [[Recipe D]] | Eating out | [[Recipe E]] | Dinner Out | [[Recipe F]] |
+| February 17th | Eating out | Eating out  | [[Recipe G]] | Eating out | [[Recipe H]] | [[Recipe I]] | [[Recipe J]] |
+|               |                   |         |           |          |        |          |        |
+`;
+
+        // Add recipe to March 4th 2025 (Tuesday in week of March 3rd with Monday start)
+        const targetDate = moment('2025-03-04');
+        await AddRecipeToMealPlanByDate(mockContext, mockRecipe, targetDate, 'Tuesday');
+
+        // Should have the new week row
+        expect(fileContent).toContain('March 3rd');
+        expect(fileContent).toContain('[[Test Recipe]]');
+
+        // The separator row should still come right after the header
+        const lines = fileContent.split('\n');
+        const headerIndex = lines.findIndex((line) => line.includes('Week Start'));
+        const separatorIndex = lines.findIndex((line) => line.trim().match(/^\|[\s-]+\|/));
+
+        expect(separatorIndex).toBe(headerIndex + 1);
+
+        // The new week should be after the separator (at index 2 or later)
+        const march3rdIndex = lines.findIndex((line) => line.includes('March 3rd'));
+        expect(march3rdIndex).toBeGreaterThan(separatorIndex);
+    });
+
+    test('should handle table with leading blank line when adding future week', async () => {
+        // Test for bug where new row is inserted between header and separator
+        const settings = new MealSettings();
+        settings.mealPlanNote = 'Meal Plan';
+        settings.startOfWeek = 1; // Monday
+        settings.mealPlanFormat = MealPlanFormat.Table;
+        mockContext.settings = writable(settings);
+
+        // Content with a leading blank line
+        fileContent = `
+| Week Start | Monday | Tuesday | Wednesday | Thursday | Friday | Saturday | Sunday |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| January 13th | Eating out | Eating out | Eating out | Eating out | [[Recipe A]] | [[Recipe B]] | [[Recipe C]] |
+| | | | | | | | |
+`;
+
+        const targetDate = moment('2025-03-04');
+        await AddRecipeToMealPlanByDate(mockContext, mockRecipe, targetDate, 'Tuesday');
+
+        // The separator row should still come right after the header
+        const lines = fileContent.split('\n');
+        const headerIndex = lines.findIndex((line) => line.includes('Week Start'));
+        const separatorIndex = lines.findIndex((line) => line.trim().startsWith('| ---'));
+
+        expect(separatorIndex).toBe(headerIndex + 1);
+
+        // The new week should be after the separator
+        const march3rdIndex = lines.findIndex((line) => line.includes('March 3rd'));
+        expect(march3rdIndex).toBeGreaterThan(separatorIndex);
+    });
+
+    test('should insert future week at end in chronological order', async () => {
+        // Weeks should be in chronological order: oldest at top, newest at bottom
+        const settings = new MealSettings();
+        settings.mealPlanNote = 'Meal Plan';
+        settings.startOfWeek = 1; // Monday
+        settings.mealPlanFormat = MealPlanFormat.Table;
+        mockContext.settings = writable(settings);
+
+        fileContent = `| Week Start | Monday | Tuesday | Wednesday | Thursday | Friday | Saturday | Sunday |
+|---|---|---|---|---|---|---|---|
+| January 13th | Eating out | Eating out | [[Recipe A]] | Eating out | [[Recipe B]] | [[Recipe C]] | [[Recipe D]] |
+| January 20th | Eating out | Eating out | [[Recipe E]] | Eating out | [[Recipe F]] | [[Recipe G]] | [[Recipe H]] |
+| February 17th | Eating out | Eating out | [[Recipe I]] | Eating out | [[Recipe J]] | [[Recipe K]] | [[Recipe L]] |
+| | | | | | | | |
+`;
+
+        // Add recipe to March 4th 2025 (week of March 3rd)
+        const targetDate = moment('2025-03-04');
+        await AddRecipeToMealPlanByDate(mockContext, mockRecipe, targetDate, 'Tuesday');
+
+        // Should have the new week row
+        expect(fileContent).toContain('March 3rd');
+        expect(fileContent).toContain('[[Test Recipe]]');
+
+        // Verify chronological order: Jan 13 < Jan 20 < Feb 17 < Mar 3
+        const jan13Index = fileContent.indexOf('January 13th');
+        const jan20Index = fileContent.indexOf('January 20th');
+        const feb17Index = fileContent.indexOf('February 17th');
+        const mar3Index = fileContent.indexOf('March 3rd');
+
+        expect(jan13Index).toBeLessThan(jan20Index);
+        expect(jan20Index).toBeLessThan(feb17Index);
+        expect(feb17Index).toBeLessThan(mar3Index);
+    });
+
+    test('should insert past week in correct chronological position', async () => {
+        // When adding a week that's older than existing weeks, it should go at the top
+        const settings = new MealSettings();
+        settings.mealPlanNote = 'Meal Plan';
+        settings.startOfWeek = 1; // Monday
+        settings.mealPlanFormat = MealPlanFormat.Table;
+        mockContext.settings = writable(settings);
+
+        fileContent = `| Week Start | Monday | Tuesday | Wednesday | Thursday | Friday | Saturday | Sunday |
+|---|---|---|---|---|---|---|---|
+| February 17th | Eating out | Eating out | [[Recipe A]] | Eating out | [[Recipe B]] | [[Recipe C]] | [[Recipe D]] |
+| February 24th | Eating out | Eating out | [[Recipe E]] | Eating out | [[Recipe F]] | [[Recipe G]] | [[Recipe H]] |
+| | | | | | | | |
+`;
+
+        // Add recipe to February 11th 2025 (week of February 10th - before existing weeks)
+        const targetDate = moment('2025-02-11');
+        await AddRecipeToMealPlanByDate(mockContext, mockRecipe, targetDate, 'Tuesday');
+
+        // Should have the new week row
+        expect(fileContent).toContain('February 10th');
+        expect(fileContent).toContain('[[Test Recipe]]');
+
+        // Verify chronological order: Feb 10 < Feb 17 < Feb 24
+        const feb10Index = fileContent.indexOf('February 10th');
+        const feb17Index = fileContent.indexOf('February 17th');
+        const feb24Index = fileContent.indexOf('February 24th');
+
+        expect(feb10Index).toBeLessThan(feb17Index);
+        expect(feb17Index).toBeLessThan(feb24Index);
+    });
+
+    test('should insert week between existing weeks in chronological order', async () => {
+        const settings = new MealSettings();
+        settings.mealPlanNote = 'Meal Plan';
+        settings.startOfWeek = 1; // Monday
+        settings.mealPlanFormat = MealPlanFormat.Table;
+        mockContext.settings = writable(settings);
+
+        fileContent = `| Week Start | Monday | Tuesday | Wednesday | Thursday | Friday | Saturday | Sunday |
+|---|---|---|---|---|---|---|---|
+| January 13th | Eating out | Eating out | [[Recipe A]] | Eating out | [[Recipe B]] | [[Recipe C]] | [[Recipe D]] |
+| February 17th | Eating out | Eating out | [[Recipe E]] | Eating out | [[Recipe F]] | [[Recipe G]] | [[Recipe H]] |
+| | | | | | | | |
+`;
+
+        // Add recipe to January 28th 2025 (week of January 27th - between existing weeks)
+        const targetDate = moment('2025-01-28');
+        await AddRecipeToMealPlanByDate(mockContext, mockRecipe, targetDate, 'Tuesday');
+
+        // Should have the new week row
+        expect(fileContent).toContain('January 27th');
+        expect(fileContent).toContain('[[Test Recipe]]');
+
+        // Verify chronological order: Jan 13 < Jan 27 < Feb 17
+        const jan13Index = fileContent.indexOf('January 13th');
+        const jan27Index = fileContent.indexOf('January 27th');
+        const feb17Index = fileContent.indexOf('February 17th');
+
+        expect(jan13Index).toBeLessThan(jan27Index);
+        expect(jan27Index).toBeLessThan(feb17Index);
+    });
+});
+
 describe('detectMealPlanFormat', () => {
     test('should detect list format', () => {
         const content = `# Week of January 8th
